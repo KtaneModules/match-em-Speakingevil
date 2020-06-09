@@ -2,6 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.RegularExpressions;
 using UnityEngine;
 using Random = UnityEngine.Random;
 
@@ -248,7 +249,7 @@ public class MatchemScript : MonoBehaviour {
                 {
                     stage--;
                     progressor.AddInteractionPunch(0.2f);
-                    Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.ButtonPress, transform);
+                    Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.ButtonPress, progressor.transform);
                     Audio.PlaySoundAtTransform("Cardflip", transform);
                     StartCoroutine(Wait(0.5f, true));
                     for (int i = 0; i < 25; i++)
@@ -258,7 +259,7 @@ public class MatchemScript : MonoBehaviour {
                 {
                     stage--;
                     progressor.AddInteractionPunch(0.2f);
-                    Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.ButtonPress, transform);
+                    Audio.PlayGameSoundAtTransform(KMSoundOverride.SoundEffect.ButtonPress, progressor.transform);
                     Audio.PlaySoundAtTransform("Cardshift", transform);
                     StartCoroutine(Wait(1, true));
                     foreach (int c in positions[7 - stage].Where((x, i) => x != positions[8 - stage][i]))
@@ -323,7 +324,7 @@ public class MatchemScript : MonoBehaviour {
     private void CardSelect(int card)
     {
         StartCoroutine(Flip(card));
-        Audio.PlaySoundAtTransform("Cardflip", transform);
+        Audio.PlaySoundAtTransform("Cardflip", cards[card].transform);
         if (select.All(s => s == -1))
         { 
             StartCoroutine(Wait(0.5f, false));
@@ -366,5 +367,164 @@ public class MatchemScript : MonoBehaviour {
             StartCoroutine(Flip(select[1]));
         }
         select = new int[2] { -1, -1 };
+    }
+
+    //twitch plays
+    #pragma warning disable 414
+    private readonly string TwitchHelpMessage = @"!{0} start [Flips the cards over] | !{0} next [Performs the next card shuffle] | !{0} pick a1 e5 [Picks the two specified cards at the specified coordinates]";
+    #pragma warning restore 414
+    IEnumerator ProcessTwitchCommand(string command)
+    {
+        if (Regex.IsMatch(command, @"^\s*start\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            yield return null;
+            if (stage != 9)
+            {
+                yield return "sendtochaterror The cards have already been flipped!";
+            }
+            else
+            {
+                progressor.OnInteract();
+            }
+            yield break;
+        }
+        if (Regex.IsMatch(command, @"^\s*next\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            yield return null;
+            if (stage == 9)
+            {
+                yield return "sendtochaterror Cannot shuffle until the cards have been flipped!";
+            }
+            else if (stage == 0)
+            {
+                yield return "sendtochaterror Cannot shuffle since the module is out of shuffles!";
+            }
+            else if (wait)
+            {
+                yield return "sendtochaterror Cannot shuffle while the cards are animating!";
+            }
+            else
+            {
+                progressor.OnInteract();
+            }
+            yield break;
+        }
+        string[] parameters = command.Split(' ');
+        if (Regex.IsMatch(parameters[0], @"^\s*pick\s*$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            yield return null;
+            if (stage != 0)
+            {
+                yield return "sendtochaterror Cannot pick cards yet because not all shuffles have been performed!";
+            }
+            else if (wait || !select.Contains(-1))
+            {
+                yield return "sendtochaterror Cannot pick cards while the cards are animating!";
+            }
+            else if (parameters.Length > 3)
+            {
+                yield return "sendtochaterror Too many parameters!";
+            }
+            else if (parameters.Length == 3)
+            {
+                string[] valids = { "a1", "b1", "c1", "d1", "e1", "a2", "b2", "c2", "d2", "e2", "a3", "b3", "c3", "d3", "e3", "a4", "b4", "c4", "d4", "e4", "a5", "b5", "c5", "d5", "e5" };
+                if (!valids.Contains(parameters[1].ToLower()))
+                {
+                    yield return "sendtochaterror The specified coordinate '" + parameters[1] + "' is invalid!";
+                    yield break;
+                }
+                if (!valids.Contains(parameters[2].ToLower()))
+                {
+                    yield return "sendtochaterror The specified coordinate '" + parameters[2] + "' is invalid!";
+                    yield break;
+                }
+                if (parameters[1].EqualsIgnoreCase(parameters[2]))
+                {
+                    yield return "sendtochaterror The coordinate of the first picked card cannot be the same as the second picked card!";
+                    yield break;
+                }
+                if (matched[positions[8][Array.IndexOf(valids, parameters[1].ToLower())]] || matched[positions[8][Array.IndexOf(valids, parameters[1].ToLower())]])
+                {
+                    yield return "sendtochaterror One of these cards has already been matched!";
+                    yield break;
+                }
+                if (select[0] != -1)
+                {
+                    StartCoroutine(Flip(select[0]));
+                    select[0] = -1;
+                    while (select[0] != -1 || select[1] != -1) { yield return true; yield return new WaitForSeconds(0.1f); }
+                }
+                cards[positions[8][Array.IndexOf(valids, parameters[1].ToLower())]].OnInteract();
+                if (Array.IndexOf(pairs, select[0]) == 24)
+                {
+                    yield return "strike";
+                }
+                while (wait) { yield return true; yield return new WaitForSeconds(0.1f); }
+                cards[positions[8][Array.IndexOf(valids, parameters[2].ToLower())]].OnInteract();
+                if (Array.IndexOf(pairs, select[0]) / 2 != Array.IndexOf(pairs, select[1]) / 2)
+                {
+                    yield return "strike";
+                }
+                else if ((Array.IndexOf(pairs, select[0]) / 2 == Array.IndexOf(pairs, select[1]) / 2) && matched.Where(t => t).Count() == 24)
+                {
+                    yield return "solve";
+                }
+            }
+            else if (parameters.Length == 2)
+            {
+                string[] valids = { "a1", "b1", "c1", "d1", "e1", "a2", "b2", "c2", "d2", "e2", "a3", "b3", "c3", "d3", "e3", "a4", "b4", "c4", "d4", "e4", "a5", "b5", "c5", "d5", "e5" };
+                if (!valids.Contains(parameters[1].ToLower()))
+                {
+                    yield return "sendtochaterror The specified coordinate '" + parameters[1] + "' is invalid!";
+                }
+                else
+                {
+                    yield return "sendtochaterror Please specify another coordinate of a card to pick!";
+                }
+            }
+            else if (parameters.Length == 1)
+            {
+                yield return "sendtochaterror Please specify the coordinates of the cards you wish to pick!";
+            }
+            yield break;
+        }
+    }
+
+    IEnumerator TwitchHandleForcedSolve()
+    {
+        while (wait) { yield return true; yield return new WaitForSeconds(0.1f); }
+        int end = stage;
+        for (int i = 0; i < end; i++)
+        {
+            progressor.OnInteract();
+            while (wait) { yield return true; yield return new WaitForSeconds(0.1f); }
+        }
+        if (select[0] != -1)
+        {
+            for (int i = 0; i < 25; i++)
+            {
+                if (Array.IndexOf(pairs, select[0]) / 2 == Array.IndexOf(pairs, i) / 2)
+                {
+                    cards[positions[8][i]].OnInteract();
+                    while (select[0] != -1 || select[1] != -1) { yield return true; yield return new WaitForSeconds(0.1f); }
+                    break;
+                }
+            }
+        }
+        for (int j = 0; j < 25; j++)
+        {
+            for (int i = 0; i < 25; i++)
+            {
+                if ((Array.IndexOf(pairs, positions[8][j]) / 2 == Array.IndexOf(pairs, positions[8][i]) / 2) && matched[positions[8][j]] != true && matched[positions[8][i]] != true && i != j)
+                {
+                    cards[positions[8][j]].OnInteract();
+                    while (wait) { yield return true; yield return new WaitForSeconds(0.1f); }
+                    cards[positions[8][i]].OnInteract();
+                    while (select[0] != -1 || select[1] != -1) { yield return true; yield return new WaitForSeconds(0.1f); }
+                    break;
+                }
+            }
+        }
+        while (!moduleSolved) { yield return true; yield return new WaitForSeconds(0.1f); }
     }
 }
